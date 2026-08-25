@@ -146,6 +146,7 @@ def home():
             "/receipts?from_date=2026-08-12&to_date=2026-08-18",
             "/sales-summary?date=2026-08-12",
             "/items"
+            "/shifts?from_date=2026-08-17&to_date=2026-08-23"
         ]
     }
 

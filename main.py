@@ -9,75 +9,6 @@ import io
 
 from fastapi.responses import StreamingResponse
 
-import requests
-from fastapi import HTTPException, Query
-
-LOYVERSE_API_URL = "https://api.loyverse.com/v1.0"
-
-
-@app.get("/shifts")
-def get_shifts(
-    from_date: str | None = Query(default=None),
-    to_date: str | None = Query(default=None),
-):
-    """
-    Get register shifts from Loyverse.
-
-    Example:
-    /shifts?from_date=2026-08-17&to_date=2026-08-23
-    """
-
-    token = os.getenv("LOYVERSE_TOKEN")
-
-    if not token:
-        raise HTTPException(
-            status_code=500,
-            detail="LOYVERSE_TOKEN environment variable is not configured"
-        )
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    params = {
-        "limit": 250
-    }
-
-    # Loyverse expects ISO timestamps.
-    # Guatemala = UTC-6.
-    if from_date:
-        params["created_at_min"] = f"{from_date}T00:00:00.000Z"
-
-    if to_date:
-        params["created_at_max"] = f"{to_date}T23:59:59.999Z"
-
-    try:
-        response = requests.get(
-            f"{LOYVERSE_API_URL}/shifts",
-            headers=headers,
-            params=params,
-            timeout=30
-        )
-
-        response.raise_for_status()
-
-    except requests.RequestException as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Error communicating with Loyverse: {str(e)}"
-        )
-
-    data = response.json()
-
-    return {
-        "count": len(data.get("shifts", [])),
-        "filters": {
-            "from_date": from_date,
-            "to_date": to_date
-        },
-        "shifts": data.get("shifts", [])
-    }
-
 app = FastAPI(
     title="Nantli Loyverse API",
     version="2.0"
@@ -86,6 +17,62 @@ app = FastAPI(
 LOYVERSE_TOKEN = os.getenv("LOYVERSE_TOKEN")
 LOYVERSE_BASE_URL = "https://api.loyverse.com/v1.0"
 
+@app.get("/shifts")
+async def get_shifts(
+    from_date: str | None = Query(
+        default=None,
+        description="Start date in YYYY-MM-DD format"
+    ),
+    to_date: str | None = Query(
+        default=None,
+        description="End date in YYYY-MM-DD format"
+    ),
+):
+    params = {}
+
+    try:
+        if from_date:
+            start = datetime.strptime(from_date, "%Y-%m-%d")
+
+            params["created_at_min"] = (
+                start.replace(tzinfo=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+        if to_date:
+            end = (
+                datetime.strptime(to_date, "%Y-%m-%d")
+                + timedelta(days=1)
+            )
+
+            params["created_at_max"] = (
+                end.replace(tzinfo=timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Dates must use YYYY-MM-DD format"
+        )
+
+    data = await loyverse_get(
+        "shifts",
+        params=params
+    )
+
+    shifts = data.get("shifts", [])
+
+    return {
+        "count": len(shifts),
+        "filters": {
+            "from_date": from_date,
+            "to_date": to_date
+        },
+        "shifts": shifts
+    }
 
 def loyverse_headers():
     if not LOYVERSE_TOKEN:

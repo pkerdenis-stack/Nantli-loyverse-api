@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field
 
 import csv
 import io
+import requests
+
+from typing import Optional
+from fastapi import HTTPException
 
 from fastapi.responses import StreamingResponse
 
@@ -290,6 +294,79 @@ async def get_all_receipts(params=None):
 
     return all_receipts
 
+@app.get("/inventory")
+def get_inventory(
+    store_ids: Optional[str] = None,
+    variant_ids: Optional[str] = None,
+):
+    """
+    Read current Loyverse inventory levels.
+    This endpoint is read-only and never modifies stock.
+    """
+
+    token = os.getenv("LOYVERSE_TOKEN")
+
+    if not token:
+        raise HTTPException(
+            status_code=500,
+            detail="LOYVERSE_TOKEN is not configured",
+        )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    params = {"limit": 250}
+
+    if store_ids:
+        params["store_ids"] = store_ids
+
+    if variant_ids:
+        params["variant_ids"] = variant_ids
+
+    inventory_levels = []
+
+    while True:
+        response = requests.get(
+            "https://api.loyverse.com/v1.0/inventory",
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+
+        if response.status_code == 403:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "The Loyverse token does not have INVENTORY_READ permission. "
+                    "Reauthorize the token with INVENTORY_READ enabled."
+                ),
+            )
+
+        if not response.ok:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail={
+                    "message": "Loyverse inventory request failed",
+                    "loyverse_response": response.text,
+                },
+            )
+
+        payload = response.json()
+        inventory_levels.extend(payload.get("inventory_levels", []))
+
+        cursor = payload.get("cursor")
+
+        if not cursor:
+            break
+
+        params["cursor"] = cursor
+
+    return {
+        "count": len(inventory_levels),
+        "inventory_levels": inventory_levels,
+    }
 
 @app.get("/")
 def home():
